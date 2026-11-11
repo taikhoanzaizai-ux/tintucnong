@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import queue
 import re
+import subprocess
+import sys
 import threading
 import tkinter as tk
 import urllib.request
@@ -16,7 +18,7 @@ import xml.etree.ElementTree as ET
 from tkinter import messagebox, ttk
 from urllib.parse import quote, urlsplit
 
-VERSION = (2, 2, 1)
+VERSION = (2, 2, 2)
 TREND_GEOS = {"Việt Nam": "VN", "Mỹ": "US", "Hàn Quốc": "KR", "Nhật Bản": "JP"}
 TREND_URL = "https://trends.google.com/trending"
 UPDATE_URL = "https://raw.githubusercontent.com/taikhoanzaizai-ux/tintucnong/main/TinNong.py"
@@ -411,7 +413,11 @@ class App:
                                        f"{error}\n\nTải ZIP để giải nén vào thư mục bạn có quyền ghi?"):
                     webbrowser.open(UPDATE_ZIP)
                 return
-            messagebox.showinfo("Tin Nóng", f"Đã cài bản {label}. Mở lại Mo-Tin-Nong.bat để sử dụng.")
+            try:
+                subprocess.Popen([sys.executable, str(Path(__file__).resolve())])
+            except OSError as error:
+                messagebox.showerror("Tin Nóng",
+                                     f"Đã cài bản {label} nhưng không tự mở được. Mở lại Mo-Tin-Nong.bat.\n\n{error}")
             self.root.destroy()
         else:
             self.status.set(f"Có bản {label} trên GitHub.")
