@@ -14,8 +14,50 @@ import xml.etree.ElementTree as ET
 from tkinter import messagebox, ttk
 from urllib.parse import quote, urlsplit
 
-VERSION = (2, 1, 0)
+VERSION = (2, 2, 0)
+TREND_GEOS = {"Việt Nam": "VN", "Mỹ": "US", "Hàn Quốc": "KR", "Nhật Bản": "JP"}
+TREND_URL = "https://trends.google.com/trending"
 UPDATE_URL = "https://raw.githubusercontent.com/taikhoanzaizai-ux/tintucnong/main/TinNong.py"
+
+
+def parse_trends(raw):
+    root = ET.fromstring(raw)
+    if root.tag != "rss":
+        raise ValueError("Phản hồi Google Trends không phải RSS")
+    rows = []
+    for item in root.findall("./channel/item"):
+        keyword = (item.findtext("title") or "").strip()
+        if not keyword:
+            continue
+        traffic = (item.findtext("{*}approx_traffic") or "").strip()
+        match = re.fullmatch(r"([\d,.\s]+)\s*([KMB]?)\+?", traffic, re.I)
+        count = -1
+        if match:
+            digits, unit = match.groups()
+            digits = "".join(digits.split())
+            multiplier = {"K": 1000, "M": 1000000, "B": 1000000000}.get(unit.upper())
+            try:
+                count = int(float(digits.replace(",", ".")) * multiplier) if multiplier else int(re.sub(r"\D", "", digits))
+            except (ValueError, OverflowError):
+                pass
+        articles = []
+        for article in item.findall("{*}news_item"):
+            url = (article.findtext("{*}news_item_url") or "").strip()
+            title = (article.findtext("{*}news_item_title") or "").strip()
+            parsed = urlsplit(url)
+            if title and parsed.scheme in ("https", "http") and parsed.hostname:
+                articles.append((title, url))
+        rows.append((count, traffic, keyword, articles))
+    return sorted(rows, key=lambda row: row[0], reverse=True)
+
+
+def fetch_trends(geo):
+    request = urllib.request.Request(f"{TREND_URL}/rss?geo={geo}", headers={"User-Agent": "TinNongRSS/2.2"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        raw = response.read(2_000_001)
+    if len(raw) > 2_000_000:
+        raise ValueError("RSS Google Trends quá lớn")
+    return parse_trends(raw)
 
 
 def check_update():
@@ -194,6 +236,7 @@ class App:
             "https://ads.tiktok.com/creative/creativeCenter/trends?region=VN")).pack(side="left")
         ttk.Button(social, text="Theanh28 · Mạng xã hội", command=lambda: webbrowser.open(
             "https://linktr.ee/theanh28multichannels")).pack(side="left", padx=6)
+        ttk.Button(social, text="Tìm kiếm thịnh hành", command=self.open_trends).pack(side="left")
         area = ttk.Frame(panel)
         area.pack(fill="both", expand=True)
         self.table = ttk.Treeview(area, columns=("score", "time", "sources", "headline"), show="headings")
@@ -217,6 +260,88 @@ class App:
         root.after(150, self.poll)
         root.after(900_000, self.periodic)
         self.scan()
+
+    def open_trends(self):
+        country = self.country.get()
+        geo = TREND_GEOS[country]
+        window = tk.Toplevel(self.root)
+        window.title(f"Tìm kiếm thịnh hành · {country}")
+        window.geometry("860x490")
+        window.minsize(600, 350)
+        panel = ttk.Frame(window, padding=14)
+        panel.pack(fill="both", expand=True)
+        status = tk.StringVar(value="Đang tải Google Trends…")
+        ttk.Label(panel, textvariable=status).pack(anchor="w", pady=(0, 8))
+        table = ttk.Treeview(panel, columns=("traffic", "keyword", "article"), show="headings", selectmode="browse")
+        for column, title, width in (("traffic", "Lượt tìm ước tính", 130), ("keyword", "Từ khóa", 180),
+                                     ("article", "Tiêu đề bài liên quan", 450)):
+            table.heading(column, text=title)
+            table.column(column, width=width, minwidth=100, stretch=column == "article")
+        table.pack(fill="both", expand=True)
+        buttons = ttk.Frame(panel)
+        buttons.pack(fill="x", pady=(8, 0))
+        articles = ttk.Combobox(buttons, state="readonly")
+        articles.pack(side="left", fill="x", expand=True)
+        rows = []
+        mailbox = queue.Queue()
+
+        def selected_articles():
+            selected = table.selection()
+            return rows[int(selected[0])][3] if selected else []
+
+        def update_links(_):
+            related = selected_articles()
+            articles.configure(values=[title for title, _ in related])
+            articles.set("")
+            if related:
+                articles.current(0)
+
+        def open_article():
+            index = articles.current()
+            related = selected_articles()
+            if 0 <= index < len(related):
+                webbrowser.open(related[index][1])
+
+        def load():
+            try:
+                mailbox.put((fetch_trends(geo), None))
+            except Exception as error:
+                mailbox.put(([], str(error)))
+
+        def finish():
+            if not window.winfo_exists():
+                return
+            try:
+                data, error = mailbox.get_nowait()
+            except queue.Empty:
+                self.root.after(150, finish)
+                return
+            refresh.state(["!disabled"])
+            if error:
+                status.set("Lỗi tải Google Trends: " + error)
+                return
+            rows[:] = data
+            table.delete(*table.get_children())
+            for i, (_, traffic, keyword, related) in enumerate(rows):
+                table.insert("", "end", iid=str(i), values=(traffic or "—", keyword, related[0][0] if related else "—"))
+            if rows:
+                table.selection_set("0")
+            update_links(None)
+            status.set(f"{len(rows)} từ khóa · Google Search · {country}" if rows else "Chưa có từ khóa trong luồng Google Trends.")
+
+        def reload():
+            refresh.state(["disabled"])
+            status.set("Đang tải Google Trends…")
+            threading.Thread(target=load, daemon=True).start()
+            self.root.after(150, finish)
+
+        table.bind("<<TreeviewSelect>>", update_links)
+        ttk.Button(buttons, text="Mở bài", command=open_article).pack(side="left", padx=5)
+        refresh = ttk.Button(buttons, text="Tải lại", command=reload)
+        refresh.pack(side="left")
+        ttk.Button(buttons, text="Google Trends", command=lambda: webbrowser.open(
+            f"{TREND_URL}?geo={geo}")).pack(side="left", padx=(5, 0))
+        reload()
 
     def social_search(self, name, url):
         selected = self.table.selection()
