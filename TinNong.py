@@ -1,6 +1,8 @@
+import base64
 import concurrent.futures
 import datetime as dt
 import email.utils
+import json
 import math
 import os
 from pathlib import Path
@@ -14,10 +16,12 @@ import xml.etree.ElementTree as ET
 from tkinter import messagebox, ttk
 from urllib.parse import quote, urlsplit
 
-VERSION = (2, 2, 0)
+VERSION = (2, 2, 1)
 TREND_GEOS = {"Việt Nam": "VN", "Mỹ": "US", "Hàn Quốc": "KR", "Nhật Bản": "JP"}
 TREND_URL = "https://trends.google.com/trending"
 UPDATE_URL = "https://raw.githubusercontent.com/taikhoanzaizai-ux/tintucnong/main/TinNong.py"
+UPDATE_API = "https://api.github.com/repos/taikhoanzaizai-ux/tintucnong/contents/TinNong.py?ref=main"
+UPDATE_ZIP = "https://github.com/taikhoanzaizai-ux/tintucnong/archive/refs/heads/main.zip"
 
 
 def parse_trends(raw):
@@ -61,16 +65,37 @@ def fetch_trends(geo):
 
 
 def check_update():
-    with urllib.request.urlopen(UPDATE_URL, timeout=10) as response:
-        body = response.read(250_001)
+    errors = []
+    for url in (UPDATE_URL, UPDATE_API):
+        try:
+            request = urllib.request.Request(url, headers={
+                "User-Agent": "TinNong-Windows",
+                "Cache-Control": "no-cache",
+            })
+            with urllib.request.urlopen(request, timeout=8) as response:
+                body = response.read(500_001)
+            if len(body) > 500_000:
+                raise ValueError("Phản hồi cập nhật quá lớn")
+            if url == UPDATE_API:
+                payload = json.loads(body)
+                if payload.get("encoding") != "base64" or payload.get("path") != "TinNong.py":
+                    raise ValueError("GitHub trả về sai tệp")
+                body = base64.b64decode("".join(payload["content"].split()), validate=True)
+            return update_version(body), body
+        except (OSError, ValueError, SyntaxError, KeyError) as error:
+            errors.append(str(error))
+    raise RuntimeError(" / ".join(errors))
+
+
+def update_version(body):
     if len(body) > 250_000:
         raise ValueError("Tệp cập nhật quá lớn")
     source = body.decode("utf-8-sig")
-    match = re.search(r"^VERSION = \((\d+), (\d+), (\d+)\)$", source, re.M)
+    match = re.search(r"^VERSION\s*=\s*\((\d+),[ \t]*(\d+),[ \t]*(\d+)\)[ \t]*\r?$", source, re.M)
     if not match:
         raise ValueError("Thiếu phiên bản trong tệp cập nhật")
     compile(source, "TinNong.py", "exec")
-    return tuple(map(int, match.groups())), body
+    return tuple(map(int, match.groups()))
 
 
 def install_update(body, path):
@@ -369,7 +394,9 @@ class App:
             return
         self.update_button.state(["!disabled"])
         if error:
-            self.status.set("Lỗi cập nhật: " + error)
+            self.status.set("Không tải được cập nhật từ GitHub.")
+            if messagebox.askyesno("Cập nhật Tin Nóng", f"{error}\n\nMở link tải ZIP trong trình duyệt?"):
+                webbrowser.open(UPDATE_ZIP)
             return
         version, body = result
         label = ".".join(map(str, version))
@@ -379,7 +406,10 @@ class App:
             try:
                 install_update(body, Path(__file__).resolve())
             except OSError as error:
-                self.status.set("Lỗi cài cập nhật: " + str(error))
+                self.status.set("Không ghi được bản cập nhật.")
+                if messagebox.askyesno("Cập nhật Tin Nóng",
+                                       f"{error}\n\nTải ZIP để giải nén vào thư mục bạn có quyền ghi?"):
+                    webbrowser.open(UPDATE_ZIP)
                 return
             messagebox.showinfo("Tin Nóng", f"Đã cài bản {label}. Mở lại Mo-Tin-Nong.bat để sử dụng.")
             self.root.destroy()
