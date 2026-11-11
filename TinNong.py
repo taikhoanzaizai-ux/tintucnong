@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from tkinter import messagebox, ttk
 from urllib.parse import quote, urlsplit
 
-VERSION = (2, 0, 0)
+VERSION = (2, 1, 0)
 UPDATE_URL = "https://raw.githubusercontent.com/taikhoanzaizai-ux/tintucnong/main/TinNong.py"
 
 
@@ -48,7 +48,7 @@ def install_update(body, path):
     finally:
         temp.unlink(missing_ok=True)
 
-FEEDS = [
+VIETNAM_FEEDS = [
     ("VnExpress", "Thời sự", "https://vnexpress.net/rss/thoi-su.rss"),
     ("VnExpress", "Đời sống", "https://vnexpress.net/rss/doi-song.rss"),
     ("VnExpress", "Pháp luật", "https://vnexpress.net/rss/phap-luat.rss"),
@@ -56,8 +56,29 @@ FEEDS = [
     ("Tuổi Trẻ", "Tin chung", "https://tuoitre.vn/rss/tin-moi-nhat.rss"),
     ("Thanh Niên", "Tin chung", "https://thanhnien.vn/rss/home.rss"),
     ("Dân trí", "Tin chung", "https://dantri.com.vn/rss/trangchinh.rss"),
+    ("Kenh14", "Giải trí", "https://kenh14.vn/rss/home.rss"),
+    ("VietNamNet", "Tin chung", "https://vietnamnet.vn/home.rss"),
+    ("Tiền Phong", "Tin chung", "https://tienphong.vn/rss/home.rss"),
+    ("Nhân Dân", "Tin chung", "https://nhandan.vn/rss/home.rss"),
+    ("Người Đưa Tin", "Tin chung", "https://www.nguoiduatin.vn/trang-chu.rss"),
+    ("VOV qua Google News", "Tin chung", "https://news.google.com/rss/search?q=site%3Avov.vn+when%3A2d&hl=vi&gl=VN&ceid=VN%3Avi"),
+    ("VTC News", "Tin chung", "https://vtcnews.vn/rss/trang-chu.rss"),
+    ("24h", "Tin chung", "https://www.24h.com.vn/upload/rss/trangchu24h.rss"),
 ]
-TOPICS = ("Tất cả", "Thời sự", "Đời sống", "Pháp luật", "Thể thao", "Tin chung")
+FEEDS_BY_COUNTRY = {
+    "Việt Nam": VIETNAM_FEEDS,
+    "Mỹ": [
+        ("ABC News", "Tin chung", "https://abcnews.go.com/abcnews/usheadlines"),
+        ("NPR", "Tin chung", "https://feeds.npr.org/1001/rss.xml"),
+    ],
+    "Hàn Quốc": [
+        ("Yonhap", "Tin chung", "https://en.yna.co.kr/RSS/national.xml"),
+    ],
+    "Nhật Bản": [
+        ("NHK World", "Tin chung", "https://www3.nhk.or.jp/nhkworld/en/news/rss/all.xml"),
+    ],
+}
+TOPICS = ("Tất cả", "Thời sự", "Đời sống", "Pháp luật", "Thể thao", "Giải trí", "Tin chung")
 IGNORE = set("và của có ở là cho khi với một những các đã được từ về trong tại sau trước trên này".split())
 
 
@@ -149,6 +170,10 @@ class App:
         self.update_button.pack(side="right", padx=(8, 0))
         self.auto = tk.BooleanVar(value=True)
         ttk.Checkbutton(bar, text="Tự quét mỗi 15 phút", variable=self.auto).pack(side="left", padx=12)
+        self.country = ttk.Combobox(bar, values=tuple(FEEDS_BY_COUNTRY), state="readonly", width=10)
+        self.country.current(0)
+        self.country.pack(side="left", padx=(0, 6))
+        self.country.bind("<<ComboboxSelected>>", self.change_country)
         self.topic = ttk.Combobox(bar, values=TOPICS, state="readonly", width=13)
         self.topic.current(0)
         self.topic.pack(side="left")
@@ -167,6 +192,8 @@ class App:
             ttk.Button(social, text=name, command=lambda n=name, u=url: self.social_search(n, u)).pack(side="left", padx=(0, 6))
         ttk.Button(social, text="TikTok thịnh hành VN", command=lambda: webbrowser.open(
             "https://ads.tiktok.com/creative/creativeCenter/trends?region=VN")).pack(side="left")
+        ttk.Button(social, text="Theanh28 · Mạng xã hội", command=lambda: webbrowser.open(
+            "https://linktr.ee/theanh28multichannels")).pack(side="left", padx=6)
         area = ttk.Frame(panel)
         area.pack(fill="both", expand=True)
         self.table = ttk.Treeview(area, columns=("score", "time", "sources", "headline"), show="headings")
@@ -234,41 +261,57 @@ class App:
         else:
             self.status.set(f"Có bản {label} trên GitHub.")
 
+    def change_country(self, _):
+        self.results = []
+        self.topic.current(0)
+        self.render()
+        if self.busy:
+            self.status.set(f"Đang chờ quét nguồn {self.country.get()}…")
+        else:
+            self.scan()
+
     def scan(self):
         if self.busy:
             return
         self.busy = True
         self.scan_button.state(["disabled"])
-        self.status.set("Đang tải RSS từ các báo…")
-        threading.Thread(target=self.collect, daemon=True).start()
+        country = self.country.get()
+        self.status.set(f"Đang tải RSS · {country}…")
+        threading.Thread(target=self.collect, args=(country,), daemon=True).start()
 
-    def collect(self):
+    def collect(self, country):
         rows, failed = [], []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(FEEDS)) as pool:
-            for feed, future in zip(FEEDS, [pool.submit(read_feed, f) for f in FEEDS]):
+        feeds = FEEDS_BY_COUNTRY[country]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(feeds)) as pool:
+            for feed, future in zip(feeds, [pool.submit(read_feed, f) for f in feeds]):
                 try:
                     rows.extend(future.result())
                 except Exception:
                     failed.append(f"{feed[0]} / {feed[1]}")
-        self.mailbox.put((rank(rows, dt.datetime.now(dt.timezone.utc)), failed))
+        self.mailbox.put((country, rank(rows, dt.datetime.now(dt.timezone.utc)), failed))
 
     def poll(self):
         self.root.after(150, self.poll)
         try:
-            results, failed = self.mailbox.get_nowait()
+            country, results, failed = self.mailbox.get_nowait()
         except queue.Empty:
             pass
         else:
             self.busy = False
             self.scan_button.state(["!disabled"])
+            if country != self.country.get():
+                self.scan()
+                self.finish_update()
+                return
+            total = len(FEEDS_BY_COUNTRY[country])
             stamp = dt.datetime.now().strftime("%H:%M:%S")
-            if len(failed) == len(FEEDS):
+            if len(failed) == total:
                 self.status.set(f"{stamp} · Không tải được RSS. Kiểm tra mạng rồi bấm Quét ngay. Danh sách cũ được giữ lại.")
             else:
                 self.results = results
                 self.render()
                 details = " · Lỗi: " + ", ".join(failed) if failed else ""
-                self.status.set(f"{stamp} · {len(results)} nhóm tin · {len(FEEDS)-len(failed)}/{len(FEEDS)} luồng RSS{details}")
+                self.status.set(f"{stamp} · {country} · {len(results)} nhóm tin · {total-len(failed)}/{total} luồng RSS{details}")
         self.finish_update()
 
     def periodic(self):
