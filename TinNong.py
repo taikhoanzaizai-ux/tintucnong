@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote, urlsplit
 
-VERSION = (2, 5, 0)
+VERSION = (2, 5, 1)
 TREND_GEOS = {"Việt Nam": "VN", "Mỹ": "US", "Hàn Quốc": "KR", "Nhật Bản": "JP"}
 TREND_URL = "https://trends.google.com/trending"
 UPDATE_URL = "https://raw.githubusercontent.com/taikhoanzaizai-ux/tintucnong/main/TinNong.py"
@@ -413,7 +413,8 @@ class App:
     def open_news_creator(self):
         window = tk.Toplevel(self.root)
         window.title("Tạo bản tin")
-        window.geometry("820x570")
+        window.geometry("820x620")
+        window.minsize(700, 440)
         panel = ttk.Frame(window, padding=14)
         panel.pack(fill="both", expand=True)
         selected = self.table.selection()
@@ -431,7 +432,7 @@ class App:
         ttk.Checkbutton(panel, text="Tìm thêm ảnh minh họa (tùy chọn)", variable=include_images).pack(anchor="w")
         status = tk.StringVar(value="Từ khóa tìm trong bảng tin RSS của quốc gia đang chọn.")
         ttk.Label(panel, textvariable=status, wraplength=760).pack(anchor="w", pady=(4, 7))
-        output = tk.Text(panel, wrap="word", font=("Segoe UI", 11))
+        output = tk.Text(panel, wrap="word", height=8, font=("Segoe UI", 11))
         output.pack(fill="both", expand=True)
         mailbox = queue.Queue()
 
@@ -540,7 +541,7 @@ class App:
         ttk.Label(panel, text="Tiêu đề dự án").pack(before=output, anchor="w")
         ttk.Entry(panel, textvariable=draft_title).pack(before=output, fill="x", pady=(0, 6))
         bar = ttk.Frame(panel)
-        bar.pack(fill="x", pady=(8, 0))
+        bar.pack(before=output, fill="x", pady=(0, 8))
         button = ttk.Button(bar, text="Tạo bản nháp", command=start)
         button.pack(side="left")
         ttk.Button(bar, text="Gửi sang Quân Bản Tin", command=send_project).pack(side="left", padx=8)
