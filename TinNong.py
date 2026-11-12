@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote, urlsplit
 
-VERSION = (2, 4, 0)
+VERSION = (2, 5, 0)
 TREND_GEOS = {"Việt Nam": "VN", "Mỹ": "US", "Hàn Quốc": "KR", "Nhật Bản": "JP"}
 TREND_URL = "https://trends.google.com/trending"
 UPDATE_URL = "https://raw.githubusercontent.com/taikhoanzaizai-ux/tintucnong/main/TinNong.py"
@@ -475,6 +475,46 @@ class App:
             threading.Thread(target=run, args=(args,), daemon=True).start()
             self.root.after(150, finish)
 
+        def send_project():
+            title = draft_title.get().strip()
+            script = output.get("1.0", "end-1c").strip()
+            if not title or not script:
+                messagebox.showinfo("Quân Bản Tin", "Cần tiêu đề và lời đọc trước khi gửi.", parent=window)
+                return
+            exe = getattr(self, "quan_ban_tin_exe", None)
+            if not exe or not exe.is_file():
+                chosen = filedialog.askopenfilename(parent=window, title="Chọn Quân Bản Tin.exe",
+                                                    filetypes=[("Ứng dụng Windows", "*.exe")])
+                if not chosen:
+                    return
+                exe = Path(chosen)
+            if exe.name.casefold() != "quân bản tin.exe" or not (exe.parent / "web" / "tin-nong-bridge.js").is_file():
+                messagebox.showerror("Quân Bản Tin", "Hãy chọn Quân Bản Tin.exe trong bản có kết nối Tin Nóng.", parent=window)
+                return
+            import tempfile
+            import uuid
+            payload = json.dumps({"id": uuid.uuid4().hex, "project": script_project(title, script)}, ensure_ascii=False).encode("utf-8")
+            if len(payload) > 1048576:
+                messagebox.showerror("Quân Bản Tin", "Kịch bản vượt giới hạn gửi trực tiếp 1 MB. Hãy xuất dự án JSON.", parent=window)
+                return
+            temporary = None
+            try:
+                inbox = exe.parent / "data" / "tin-nong-inbox.json"
+                inbox.parent.mkdir(exist_ok=True)
+                with tempfile.NamedTemporaryFile(dir=inbox.parent, delete=False) as handle:
+                    temporary = Path(handle.name)
+                    handle.write(payload)
+                temporary.replace(inbox)
+                os.startfile(str(exe))
+            except OSError as error:
+                messagebox.showerror("Quân Bản Tin", str(error), parent=window)
+                return
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+            self.quan_ban_tin_exe = exe
+            status.set("Đã gửi. Trong Quân Bản Tin, chọn Mở kịch bản từ Tin Nóng.")
+
         def export_project():
             title = draft_title.get().strip()
             script = output.get("1.0", "end-1c").strip()
@@ -503,7 +543,8 @@ class App:
         bar.pack(fill="x", pady=(8, 0))
         button = ttk.Button(bar, text="Tạo bản nháp", command=start)
         button.pack(side="left")
-        ttk.Button(bar, text="Xuất sang Quân Bản Tin", command=export_project).pack(side="left", padx=8)
+        ttk.Button(bar, text="Gửi sang Quân Bản Tin", command=send_project).pack(side="left", padx=8)
+        ttk.Button(bar, text="Xuất dự án JSON", command=export_project).pack(side="left", padx=8)
 
     def open_trends(self):
         country = self.country.get()
