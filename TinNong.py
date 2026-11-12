@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote, urlsplit
 
-VERSION = (2, 5, 1)
+VERSION = (2, 6, 0)
 TREND_GEOS = {"Việt Nam": "VN", "Mỹ": "US", "Hàn Quốc": "KR", "Nhật Bản": "JP"}
 TREND_URL = "https://trends.google.com/trending"
 UPDATE_URL = "https://raw.githubusercontent.com/taikhoanzaizai-ux/tintucnong/main/TinNong.py"
@@ -403,6 +403,7 @@ class App:
         links.pack(fill="x", pady=8)
         self.links = ttk.Combobox(links, state="readonly")
         self.links.pack(side="left", fill="x", expand=True)
+        ttk.Button(links, text="Gửi link sang Quân Bản Tin", command=self.send_selected_article).pack(side="right", padx=6)
         ttk.Button(links, text="Mở bài gốc", command=self.open_link).pack(side="left", padx=6)
         self.status = tk.StringVar(value="Đang chuẩn bị quét")
         ttk.Label(panel, textvariable=self.status, wraplength=950).pack(anchor="w")
@@ -476,46 +477,6 @@ class App:
             threading.Thread(target=run, args=(args,), daemon=True).start()
             self.root.after(150, finish)
 
-        def send_project():
-            title = draft_title.get().strip()
-            script = output.get("1.0", "end-1c").strip()
-            if not title or not script:
-                messagebox.showinfo("Quân Bản Tin", "Cần tiêu đề và lời đọc trước khi gửi.", parent=window)
-                return
-            exe = getattr(self, "quan_ban_tin_exe", None)
-            if not exe or not exe.is_file():
-                chosen = filedialog.askopenfilename(parent=window, title="Chọn Quân Bản Tin.exe",
-                                                    filetypes=[("Ứng dụng Windows", "*.exe")])
-                if not chosen:
-                    return
-                exe = Path(chosen)
-            if exe.name.casefold() != "quân bản tin.exe" or not (exe.parent / "web" / "tin-nong-bridge.js").is_file():
-                messagebox.showerror("Quân Bản Tin", "Hãy chọn Quân Bản Tin.exe trong bản có kết nối Tin Nóng.", parent=window)
-                return
-            import tempfile
-            import uuid
-            payload = json.dumps({"id": uuid.uuid4().hex, "project": script_project(title, script)}, ensure_ascii=False).encode("utf-8")
-            if len(payload) > 1048576:
-                messagebox.showerror("Quân Bản Tin", "Kịch bản vượt giới hạn gửi trực tiếp 1 MB. Hãy xuất dự án JSON.", parent=window)
-                return
-            temporary = None
-            try:
-                inbox = exe.parent / "data" / "tin-nong-inbox.json"
-                inbox.parent.mkdir(exist_ok=True)
-                with tempfile.NamedTemporaryFile(dir=inbox.parent, delete=False) as handle:
-                    temporary = Path(handle.name)
-                    handle.write(payload)
-                temporary.replace(inbox)
-                os.startfile(str(exe))
-            except OSError as error:
-                messagebox.showerror("Quân Bản Tin", str(error), parent=window)
-                return
-            finally:
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
-            self.quan_ban_tin_exe = exe
-            status.set("Đã gửi. Trong Quân Bản Tin, chọn Mở kịch bản từ Tin Nóng.")
-
         def export_project():
             title = draft_title.get().strip()
             script = output.get("1.0", "end-1c").strip()
@@ -544,7 +505,7 @@ class App:
         bar.pack(before=output, fill="x", pady=(0, 8))
         button = ttk.Button(bar, text="Tạo bản nháp", command=start)
         button.pack(side="left")
-        ttk.Button(bar, text="Gửi sang Quân Bản Tin", command=send_project).pack(side="left", padx=8)
+        ttk.Button(bar, text="Gửi sang Quân Bản Tin", command=lambda: self.send_article(value.get(), window)).pack(side="left", padx=8)
         ttk.Button(bar, text="Xuất dự án JSON", command=export_project).pack(side="left", padx=8)
 
     def open_trends(self):
@@ -764,6 +725,55 @@ class App:
             self.links.current(0)
         else:
             self.links.set("")
+
+    def send_selected_article(self):
+        selected = self.table.selection()
+        index = self.links.current()
+        if selected and index >= 0:
+            self.send_article(self.visible[selected[0]][index][1], self.root)
+        else:
+            messagebox.showinfo("Quân Bản Tin", "Chọn bài báo trước khi gửi.", parent=self.root)
+
+    def send_article(self, url, parent):
+        import tempfile
+        import uuid
+
+        url = url.strip()
+        try:
+            parsed = urlsplit(url)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname or len(url) > 8192:
+                raise ValueError
+        except ValueError:
+            messagebox.showinfo("Quân Bản Tin", "Nhập link bài báo HTTP hoặc HTTPS.", parent=parent)
+            return
+        exe = getattr(self, "quan_ban_tin_exe", None)
+        if not exe or not exe.is_file():
+            chosen = filedialog.askopenfilename(parent=parent, title="Chọn Quân Bản Tin.exe",
+                                                filetypes=[("Ứng dụng Windows", "*.exe")])
+            if not chosen:
+                return
+            exe = Path(chosen)
+        temporary = None
+        try:
+            bridge = exe.parent / "web" / "tin-nong-bridge.js"
+            if (exe.name.casefold() != "quân bản tin.exe" or not bridge.is_file()
+                    or "tin-nong-link-v1" not in bridge.read_text(encoding="utf-8")):
+                self.quan_ban_tin_exe = None
+                messagebox.showerror("Quân Bản Tin", "Chọn EXE của Quân Bản Tin 1.13.4 hoặc mới hơn.", parent=parent)
+                return
+            inbox = exe.parent / "data" / "tin-nong-inbox.json"
+            inbox.parent.mkdir(exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=inbox.parent, delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(json.dumps({"id": uuid.uuid4().hex, "url": url}, ensure_ascii=False).encode("utf-8"))
+            temporary.replace(inbox)
+            os.startfile(str(exe))
+            self.quan_ban_tin_exe = exe
+        except OSError as error:
+            messagebox.showerror("Quân Bản Tin", str(error), parent=parent)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def open_link(self):
         selected = self.table.selection()
